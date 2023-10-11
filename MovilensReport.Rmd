@@ -1,0 +1,374 @@
+---
+title: "Movie Recomendation System"
+author: "Ernesto Ferrer Mena"
+date: "2023-10-08"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+Movies have always been a door to a world of fascination, offering a diverse range of stories that wake up emotions within the audiences. However, discovering the perfect film for each person has become a challenge since each one will have different preferences. It is this challenge that recommendation systems seek to address. Nowadays, big competitors in the field like Netflix and Amazon Prime Video have shown that using data is a very effective approach to solve such an issue, transforming the way we consume media. Join us on this journey to unravel the inner workings of a Machine Learning (ML) algorithm that recommends movies for users.
+
+## Overview
+
+ In this report, we present an in-depth analysis and evaluation of a movie recommendation system. With the proliferation of digital content platforms, personalized movie recommendations have become integral to enhancing user experiences and content engagement. This report delves into our recommendation system's steps, algorithms, and performance, offering a comprehensive overview of our approach. Our primary objective is to provide a holistic understanding of our recommendation system’s inner workings and its precise ability to predict user preferences. By the conclusion of this report, readers will have a comprehensive overview of the steps followed as well as possible future improvements. 
+
+## Executive Summary
+
+This project constitutes a movie recommendation system, much like those utilized by prominent platforms such as Netflix and Amazon. Its primary objective is to provide users with movie suggestions that align with their likely high ratings. To achieve this goal, the machine learning algorithm must demonstrate proficiency in predicting users’ movie ratings, achieving an RMSE (Root Mean Square Error) below the threshold of 0.86490. Within the pages of this document, you will find an in-depth exploration of the dataset, perform data analysis, and details about the algorithms employed. Additionally, it presents segments of the code, graphical insights, and the ultimate outcomes achieved. The MovieLens dataset is widely recognized and comes in various versions, primarily distinguished by the volume of ratings, ranging from 100,000 in some editions to as many as 20 million in others. For this project, the 10-million-ratings version was used. This dataset encompasses key attributes, including ‘userId,’ ‘movieId,’ ‘rating,’ ‘timestamp,’ ‘title,’ and ‘genres’. Some of those fields were not used but included in future recommendations for improvement. A training dataset was created to experiment with various algorithms. Initially, the mean served as the initial estimate. Subsequently, factors such as movie and user effects were considered, and regularization was applied using the optimal lambda value. Finally, the Matrix Factorization algorithm, implemented using the ‘recosystem’ package, emerged as the most successful, yielding the lowest RMSE.
+
+## Analysis
+
+### Exploratory Analysis
+
+```{r Provided Code, message=FALSE, warning=FALSE, include=FALSE}
+
+if(!require(tidyverse)) install.packages("tidyverse", repos = "http://cran.us.r-project.org")
+if(!require(caret)) install.packages("caret", repos = "http://cran.us.r-project.org")
+if(!require(scales)) install.packages("scales", repos = "http://cran.us.r-project.org")
+if(!require(lubridade)) install.packages("lubridade", repos = "http://cran.us.r-project.org")
+if(!require(latexpdf)) install.packages("latexpdf", repos = "http://cran.us.r-project.org")
+if(!require(recosystem)) install.packages("recosystem", repos = "http://cran.us.r-project.org")
+if(!require(knitr)) install.packages("knitr", repos = "http://cran.us.r-project.org")
+
+library(tidyverse)
+library(caret)
+library(scales)
+library(lubridate)
+library(latexpdf)
+library(recosystem)
+library(knitr)
+
+options(timeout = 120)
+
+dl <- "ml-10M100K.zip"
+if(!file.exists(dl))
+  download.file("https://files.grouplens.org/datasets/movielens/ml-10m.zip", dl)
+
+ratings_file <- "ml-10M100K/ratings.dat"
+if(!file.exists(ratings_file))
+  unzip(dl, ratings_file)
+
+movies_file <- "ml-10M100K/movies.dat"
+if(!file.exists(movies_file))
+  unzip(dl, movies_file)
+
+ratings <- as.data.frame(str_split(read_lines(ratings_file), fixed("::"), simplify = TRUE),
+                         stringsAsFactors = FALSE)
+colnames(ratings) <- c("userId", "movieId", "rating", "timestamp")
+ratings <- ratings %>%
+  mutate(userId = as.integer(userId),
+         movieId = as.integer(movieId),
+         rating = as.numeric(rating),
+         timestamp = as.integer(timestamp))
+
+movies <- as.data.frame(str_split(read_lines(movies_file), fixed("::"), simplify = TRUE),
+                        stringsAsFactors = FALSE)
+colnames(movies) <- c("movieId", "title", "genres")
+movies <- movies %>%
+  mutate(movieId = as.integer(movieId))
+
+movielens <- left_join(ratings, movies, by = "movieId") 
+set.seed(1, sample.kind="Rounding")
+test_index <- createDataPartition(y = movielens$rating, times = 1, p = 0.1, list = FALSE)
+edx <- movielens[-test_index,]
+temp <- movielens[test_index,]
+final_holdout_test <- temp %>% 
+  semi_join(edx, by = "movieId") %>%
+  semi_join(edx, by = "userId")
+removed <- anti_join(temp, final_holdout_test)
+edx <- rbind(edx, removed)
+
+rm(dl, ratings, movies, test_index, temp, movielens, removed)
+
+#Exploratory Analysis----
+#Describe the data and show a summary of it.
+
+#row count on edx----
+edx_row_cnt <- edx %>% summarise(n())
+#count of unique users id----
+unique_userids <- edx %>% summarise(users_count = n_distinct(userId))
+#count of unique movies id----
+unique_movieids <- edx %>% summarise(movies_count = n_distinct(movieId))
+#count of unique genders combinations on edx----
+edx %>% summarise(genres_comb_count = n_distinct(genres))
+#count of unique genders----
+list_genres <- unique(unlist(strsplit(edx$genres, split = "\\|")))
+
+unique_genres_cnt<-length(list_genres)
+
+```
+
+The used MovieLens version, as previously mentioned, has 10M rows. It was randomly divided into two sets, one with 90% of the data and another with 10% used for validation. Those are ‘edx’(with 9000055 rows) and ‘final_holdout_test’ (final validation set with 999999 rows), respectively. The ‘edx’ set has 69878 unique user ids, 10677 unique movie ids, and 20 unique genres. As you might observe in the following chart most of the rates are between 4 and 3, the media and the third quartile are 4, while the first quartile is 3, the minimum value is 0.5 and the maximum is 5:
+
+```{r edx$rating,echo=FALSE}
+boxplot(edx$rating, main = 'Rates')
+
+```
+
+Lets now visualize the distribution of the rates count per movie and their average rating:
+
+```{r Rates count per movie average rating , echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+edx%>%group_by(movieId)%>%
+  summarise(rates_cnt = n(), ave_rating = sum(rating)/n())%>%
+  ggplot(aes(ave_rating,rates_cnt))+
+  geom_point(binwidth = .5, color = "black")+
+  ggtitle("Average Rating Vs Rate Count")+
+  xlab("Average Rating")+
+  ylab("Rate Count")
+
+```
+
+Observing the latest chart, we can easily see some details like:
+
+-   Very few movies have more than 5000 ratings.
+
+-   Movies with more rates tend to be closer to the median(which is 4).
+
+-   Movies with average rating closer to minimum and maximum have less ratings.
+
+The latest observation is very important if we are trying to remove some noise from the data.
+
+The following histogram shows how users use the ratings. Are they more inclined to rate with exact numbers?
+
+```{r Rates histogram, echo=FALSE}
+options(scipen = 999)
+edx %>% ggplot(aes(rating)) +
+  geom_histogram(binwidth = .5, color = "black") +
+  ylab("Count (millions)") +
+  xlab("Rating") +
+  ggtitle("Rating Count") +
+  scale_y_continuous(breaks = c(1000000,2000000), labels = c(1,2))
+```
+
+That answers the previous question. Users tend to use more exact numbers when rating a movie than using half numbers but, what about a movie's average rating distribution? As is shown in the figure below, the average rating is mainly distributed between 2.5 and 4.
+
+```{r Average rating by movie, echo=FALSE}
+edx %>% group_by(movieId) %>%
+  summarise(ave_rating = sum(rating)/n()) %>%
+  ggplot(aes(ave_rating)) +
+  geom_histogram(bins = 20, color = "black") +
+  ylab("Count") +
+  xlab("Average Rating") +
+  ggtitle("Average Rating by Movie")
+```
+
+## Methods
+
+### Getting ready
+
+Following our exploratory analysis and comprehension of the data’s structure, values, and distribution, we are poised to embark on the creation of our initial iteration of the movie recommendation system. Our preliminary action involves partitioning the ‘edx’ dataset into ‘training’ (comprising 90% of edx’s data) and ‘test’ (comprising 10% of edx’s data). Subsequently, multiple algorithms will undergo testing, and the one producing the lowest RMSE will be selected as the candidate for evaluation using the ‘final_holdout_dataset’. The dataset was split using the following code:
+
+```{r, message=FALSE}
+# Test dataset will be 10% of edx
+test_index <- createDataPartition(y = edx$rating, times = 1, p = 0.1, list = FALSE)
+training <- edx[-test_index,]
+test <- edx[test_index,]
+
+
+temp <- test %>% 
+  semi_join(training, by = "movieId") %>%
+  semi_join(training, by = "userId")
+
+# Add rows removed from test set back into training set
+removed <- anti_join(test, temp)
+training <- rbind(training, removed)
+```
+
+### Prediction based on rating's mean
+
+The starting point for our algorithms was the mean. Any algorithm after this would have to improve the RMSE value. Lets start by calculating the mean and use it to predict saving the results on 'rmse_results'.
+
+```{r}
+mu_hat <- mean(training$rating)
+
+naive_rmse <- RMSE(test$rating, mu_hat)
+
+rmse_results <- tibble(method = "Just the average", RMSE = naive_rmse)
+```
+
+Lets see how the mean did:
+
+```{r, echo=FALSE}
+kable(rmse_results)
+```
+
+For a first aprouch it is a good starting point.
+
+### Movie Effect
+
+Each movie will have their own average rates. We can improve the RMSE value by taking that into consideration and calculating the movie effect as follow:
+
+```{r}
+movie_ave <- training %>%
+  group_by(movieId) %>%
+  summarize(bi_hat = mean(rating - mu_hat))
+
+predicted_ratings <- mu_hat + test %>%
+  left_join(movie_ave, by = 'movieId') %>%
+  pull(bi_hat)
+
+movieEffect_rmse <- RMSE(predicted_ratings, test$rating)
+rmse_results <- bind_rows(rmse_results, tibble(method = "Movie effect", RMSE = movieEffect_rmse))
+```
+
+Lets see how that improved our previous RMSE value:
+
+```{r, echo=FALSE}
+kable(rmse_results)
+```
+
+### User Effect
+
+Another observation is that the same way each person has a different concept of “much”, “good”, etc., different users will penalize different each movie. For example, some users may opt not to recommend movies they've rated with a score of 3 or lower, while others might apply a similar criterion but restrict it to movies rated 2 or below. Let's introduce a user effect using the rating average each user has:
+
+```{r}
+user_ave <- training %>%
+  left_join(movie_ave, by = 'movieId') %>%
+  group_by(userId) %>%
+  summarize(bu_hat = mean(rating - mu_hat - bi_hat))
+
+predicted_ratings <- test %>%
+  left_join(movie_ave, by = 'movieId') %>%
+  left_join(user_ave, by = 'userId') %>%
+  mutate(pred = mu_hat + bi_hat + bu_hat) %>%
+  pull(pred)
+
+userEffect_rmse <- RMSE(predicted_ratings, test$rating)
+rmse_results <- bind_rows(rmse_results, tibble(method = "User Effect", RMSE = userEffect_rmse))
+```
+
+Now results stored on 'rmse_results' look like this:
+
+```{r, echo=FALSE}
+kable(rmse_results)
+```
+
+It deffinetly improved the RMSE value but we still can do better.
+
+### Regularization
+
+Remember those movies with very little rating counts? The ones having average rates below 2 or close to 5? Well, regularization was used taking those into consideration. Using a penalized algorithm will reduce the effect those movies have on our RMSE values. Starting by creating a list of lambda values from 0 to 10 in increments of 0.25, we are going to adjust the algorithm taking user and movie effects but using lambdas to increase the denominator when calculating the mean in each case and selecting the lambda that offers the best result. Our code will look like this:
+
+```{r}
+lambdas <- seq(0,10,.25)
+
+rmses <- sapply(lambdas, function(x){
+  mu <- mean(training$rating)
+  
+  bi <- training %>%
+    group_by(movieId) %>%
+    summarize(bi = sum(rating - mu)/(n()+x))
+  
+  bu <-training %>%
+    left_join(bi, by="movieId") %>%
+    group_by(userId) %>%
+    summarize(bu = sum(rating - bi - mu)/(n()+x))
+  
+  predicted_ratings <- test %>%
+    left_join(bi, by = "movieId") %>%
+    left_join(bu, by = "userId") %>%
+    mutate(pred = mu + bi + bu) %>%
+    pull(pred)
+  
+  return(RMSE(predicted_ratings, test$rating))
+})
+rmse_results <- bind_rows(rmse_results, tibble(method = paste(c("Regularization with lambda =", as.character(lambdas[which.min(rmses)])), collapse =  " "), RMSE = min(rmses)))
+
+```
+
+Let's see what lambda value had the best result:
+
+```{r, echo=FALSE}
+qplot(lambdas, rmses)
+```
+
+Using the best lambda value for regularization we should get a better result:
+
+```{r, echo=FALSE}
+kable(rmse_results)
+```
+
+As it was expected, regularization improved RMSE ever more.
+
+### Matrix Factorization
+
+The \'recosystem\' package was used for this method. According to the recosystem R Documentation, it is a package based on \'LIMBF\', which is a high-performance C++ library for large-scale matrix factorization. LIBMF is itself a parallelized library, meaning that users can take advantage of multicore CPUs to speed up the computation. It also utilizes some advanced CPU features to further improve the performance. More information about this package can be found at: [https://www.rdocumentation.org/packages/recosystem/versions/0.5.1](#0){style="font-size: 11pt;"}
+
+Different configurations were tested, but since the reviewer may not have the same CPU and because the improvement compared to the default was not significant, the latter was selected. Here\'s an example of the code:
+
+```{r}
+if(!require(recosystem))
+  install.packages("recosystem", repos = "http://cran.us.r-project.org")
+train_matrix <- with(training, data_memory(user_index = userId, item_index = movieId, rating = rating))
+test_matrix <- with(test, data_memory(user_index = userId, item_index = movieId, rating = rating))
+model_object <- recosystem::Reco()
+
+
+model_object$train(train_matrix)
+y_hat <- model_object$predict(test_matrix, out_memory())
+rmse_results <- bind_rows(rmse_results, tibble(method = "Matrix Factorization(recosystem)", RMSE = RMSE(test$rating, y_hat)))
+rmse_results
+
+
+```
+
+Now 'rmse_results' looks like this:
+
+```{r, echo=FALSE}
+kable(rmse_results)
+```
+
+### 
+
+## Results
+
+As you might see the matrix factorization with 'recosystem' had not only the best result but also was the only method that went beyond the threshold. For that, it was the method selected to test with the 'final_holdout_test' dataset.
+
+```{r}
+
+
+test_matrix <- with(final_holdout_test, data_memory(user_index = userId, item_index = movieId, rating = rating))
+model_object <- recosystem::Reco()
+
+
+model_object$train(train_matrix)
+y_hat <- model_object$predict(test_matrix, out_memory())
+rmse_results <- bind_rows(rmse_results, tibble(method = "Final", RMSE = RMSE(final_holdout_test$rating, y_hat)))
+```
+
+Final results stored on 'rmse_results' look like this:
+
+```{r, echo=FALSE}
+kable(rmse_results)
+```
+
+Finally, the goal of the project was achieved with the select method. As we can see in the previous table, 'Final' shows a great improvement from the first method implemented.
+
+## Conclusion
+
+In conclusion, the recommendation system developed in this project has the potential to provide valuable insights and recommendations to users. By leveraging machine learning algorithms and data analysis techniques, we were able to build a system that can predict user preferences and make personalized recommendations. The system was evaluated using various metrics, and the results showed that it performs well in terms of accuracy and efficiency.
+
+However, there is still room for improvement. Part of the available data like 'timestamp' and 'genres' weren't used. Exploring those to see if they have any effect would be an interesting adventure.
+
+Overall, this project demonstrates the power of data science in developing recommendation systems that can provide value to users.
+
+## Appendix
+
+An interesting pattern found when looking into movies with less than 100 ratings:
+
+```{r Appendix-I, message=FALSE, warning=FALSE, paged.print=FALSE}
+edx%>%group_by(movieId)%>%
+  summarise(rates_cnt = n(), ave_rating = sum(rating)/n())%>%
+  ggplot(aes(ave_rating,rates_cnt))+
+  geom_point(binwidth = .5, color = "black")+
+  ylim(0,100)+
+  ylab("Rate Count") +
+  xlab("Average Rating") +
+  ggtitle("Movies with less than 100 rates")
+  
+```
